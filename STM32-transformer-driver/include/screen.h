@@ -21,6 +21,8 @@ void Screen_UpdatePWM(uint32_t frequency, uint8_t duty_cycle);
 void Screen_UpdateFrequency(uint32_t frequency);
 void Screen_UpdateDutyCycle(uint8_t duty_cycle);
 void Screen_UpdateTemperature(float temperature);
-void Screen_DisplayPWMandTemp(uint32_t frequency, uint8_t duty_cycle, float temperature);
+void Screen_UpdateCurrent(float current);
+void Screen_DisplayAll(uint32_t frequency, uint8_t duty_cycle, float temperature, float current);
+void Screen_UpdateFan(uint8_t fan_duty);
 
 #endif // SCREEN_H

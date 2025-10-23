@@ -296,36 +296,92 @@ void Screen_UpdateTemperature(float temperature)
 }
 
 /**
- * @brief Display PWM frequency and temperature on LCD
+ * @brief Update only the current value on LCD (no screen clear)
+ * @param current Current in Amperes
+ */
+void Screen_UpdateCurrent(float current)
+{
+  char buffer[20];
+
+  // Position cursor for current display
+  Screen_SetCursor(1, 8);
+
+  // Format current with 2 decimal places
+  int16_t current_int = (int16_t)current;
+  int16_t current_frac = (int16_t)((current - current_int) * 100);
+  if (current_frac < 0)
+    current_frac = -current_frac;
+
+  snprintf(buffer, sizeof(buffer), "I:%d.%02dA ", current_int, current_frac);
+  Screen_Print(buffer);
+}
+
+/**
+ * @brief Display all parameters: PWM frequency, duty cycle, temperature, and current
  * @param frequency PWM frequency in Hz
  * @param duty_cycle PWM duty cycle in percentage (0-100)
  * @param temperature Temperature in Celsius
+ * @param current Current in Amperes
  */
-void Screen_DisplayPWMandTemp(uint32_t frequency, uint8_t duty_cycle, float temperature)
+void Screen_DisplayAll(uint32_t frequency, uint8_t duty_cycle, float temperature, float current)
 {
   char buffer[20];
 
   // Clear display
   Screen_Clear();
 
-  // Line 1: Display frequency and duty cycle (compact format)
+  // Line 1: PWM frequency and duty cycle (new format: "PWM 10.0kHz 50%")
   Screen_SetCursor(0, 0);
-
-  // Format frequency
   if (frequency >= 1000)
   {
-    uint32_t khz = frequency / 1000;
-    snprintf(buffer, sizeof(buffer), "F:%lukHz D:%u%%", khz, duty_cycle);
+    uint32_t khz_int = frequency / 1000;
+    uint32_t khz_frac = (frequency % 1000) / 100; // Get first decimal digit
+    snprintf(buffer, sizeof(buffer), "PWM %lu.%lukHz %u%%", khz_int, khz_frac, duty_cycle);
   }
   else
   {
-    snprintf(buffer, sizeof(buffer), "F:%luHz D:%u%%", frequency, duty_cycle);
+    snprintf(buffer, sizeof(buffer), "PWM %luHz %u%%", frequency, duty_cycle);
   }
   Screen_Print(buffer);
 
-  // Line 2: Display temperature
+  // Line 2: Temperature, current, and fan (new format: "29.5C 1.43A F50%")
   Screen_SetCursor(1, 0);
-  Screen_Print("Temp:");
-  snprintf(buffer, sizeof(buffer), "%.1fC", temperature);
+
+  // Temperature (manually format to avoid floating-point printf)
+  int16_t temp_int = (int16_t)temperature;
+  int16_t temp_frac = (int16_t)((temperature - temp_int) * 10);
+  if (temp_frac < 0)
+    temp_frac = -temp_frac;
+
+  snprintf(buffer, sizeof(buffer), "%d.%dC ", temp_int, temp_frac);
+  Screen_Print(buffer);
+
+  // Current (2 decimal places)
+  int16_t current_int = (int16_t)current;
+  int16_t current_frac = (int16_t)((current - current_int) * 100);
+  if (current_frac < 0)
+    current_frac = -current_frac;
+
+  snprintf(buffer, sizeof(buffer), "%d.%02dA ", current_int, current_frac);
+  Screen_Print(buffer);
+
+  // Fan display (initial value - will be updated by Fan_Update)
+  snprintf(buffer, sizeof(buffer), "F0%%");
+  Screen_Print(buffer);
+}
+
+/**
+ * @brief Update only the fan duty cycle on LCD
+ * @param fan_duty Fan duty cycle in percentage (0-100)
+ */
+void Screen_UpdateFan(uint8_t fan_duty)
+{
+  char buffer[20];
+
+  // Position cursor for fan display (after temperature and current)
+  // Format: "29.5C 1.43A F50%"
+  // Position varies based on temperature and current digits, so recalculate
+  Screen_SetCursor(1, 12);
+  snprintf(buffer, sizeof(buffer), "%u%%  ", fan_duty);
   Screen_Print(buffer);
 }

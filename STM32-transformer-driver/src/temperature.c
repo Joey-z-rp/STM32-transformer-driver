@@ -176,7 +176,7 @@ uint8_t Temperature_GetData(uint8_t *data)
 float Temperature_Read(void)
 {
   uint8_t data[2];
-  volatile int16_t raw_temp;
+  int16_t raw_temp;
   float temperature;
 
   // Start conversion

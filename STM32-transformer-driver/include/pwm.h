@@ -20,4 +20,11 @@ void PWM_DecreaseFrequency(void);
 void PWM_IncreaseDutyCycle(void);
 void PWM_DecreaseDutyCycle(void);
 
+// Settings persistence functions
+void PWM_MarkSettingsDirty(void);
+uint8_t PWM_AreSettingsDirty(void);
+void PWM_ResetDirtyTimer(void);
+uint32_t PWM_GetDirtyTimestamp(void);
+void PWM_SaveSettings(void);
+
 #endif // PWM_H

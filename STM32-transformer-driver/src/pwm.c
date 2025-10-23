@@ -3,15 +3,188 @@
 // TIM2 handle for PWM generation
 TIM_HandleTypeDef htim2;
 
-// Current PWM settings
-static uint32_t current_frequency = 10000; // Start at 10 kHz
-static uint8_t current_duty_cycle = 50;    // Start at 50%
+// Current PWM settings (defaults if no saved settings exist)
+static uint32_t current_frequency = 10000; // Default: 10 kHz
+static uint8_t current_duty_cycle = 0;     // Default: 0%
 
 // System clock frequency (STM32F103C8 default is 72MHz)
 #define SYSTEM_CLOCK 72000000
 
 // Target minimum period for 1% duty cycle resolution (need at least 100 steps)
 #define TARGET_MIN_PERIOD 100
+
+// Flash storage settings
+// STM32F103C8 has 64KB flash, using last page (1KB) for settings
+#define FLASH_SETTINGS_PAGE_ADDR 0x0800F800 // Last 1KB page
+#define FLASH_SETTINGS_MAGIC 0x50574D53     // "PWMS" magic number
+
+// Settings structure stored in flash
+typedef struct
+{
+  uint32_t magic;      // Magic number to verify valid data
+  uint32_t frequency;  // Saved frequency
+  uint8_t duty_cycle;  // Saved duty cycle
+  uint8_t reserved[3]; // Padding for alignment
+  uint32_t checksum;   // Simple checksum for data integrity
+} PWM_Settings_t;
+
+// Settings dirty tracking
+static uint8_t settings_dirty = 0;
+static uint32_t settings_dirty_timestamp = 0;
+
+/**
+ * @brief Calculate checksum for settings
+ * @param settings Pointer to settings structure
+ * @return Calculated checksum
+ */
+static uint32_t PWM_CalculateChecksum(const PWM_Settings_t *settings)
+{
+  uint32_t checksum = settings->magic;
+  checksum ^= settings->frequency;
+  checksum ^= (uint32_t)settings->duty_cycle;
+  return checksum;
+}
+
+/**
+ * @brief Load PWM settings from flash
+ * @return 1 if settings loaded successfully, 0 otherwise
+ */
+static uint8_t PWM_LoadSettings(void)
+{
+  const PWM_Settings_t *flash_settings = (const PWM_Settings_t *)FLASH_SETTINGS_PAGE_ADDR;
+
+  // Verify magic number
+  if (flash_settings->magic != FLASH_SETTINGS_MAGIC)
+  {
+    return 0; // No valid settings found
+  }
+
+  // Verify checksum
+  if (flash_settings->checksum != PWM_CalculateChecksum(flash_settings))
+  {
+    return 0; // Corrupted data
+  }
+
+  // Validate frequency range
+  if (flash_settings->frequency < PWM_MIN_FREQ || flash_settings->frequency > PWM_MAX_FREQ)
+  {
+    return 0; // Invalid frequency
+  }
+
+  // Validate duty cycle range
+  if (flash_settings->duty_cycle > 100)
+  {
+    return 0; // Invalid duty cycle
+  }
+
+  // Load settings
+  current_frequency = flash_settings->frequency;
+  current_duty_cycle = flash_settings->duty_cycle;
+
+  return 1; // Settings loaded successfully
+}
+
+/**
+ * @brief Save PWM settings to flash
+ */
+void PWM_SaveSettings(void)
+{
+  PWM_Settings_t settings;
+  HAL_StatusTypeDef status;
+
+  // Prepare settings structure
+  settings.magic = FLASH_SETTINGS_MAGIC;
+  settings.frequency = current_frequency;
+  settings.duty_cycle = current_duty_cycle;
+  settings.reserved[0] = 0;
+  settings.reserved[1] = 0;
+  settings.reserved[2] = 0;
+  settings.checksum = PWM_CalculateChecksum(&settings);
+
+  // Unlock flash
+  HAL_FLASH_Unlock();
+
+  // Erase the page
+  FLASH_EraseInitTypeDef EraseInitStruct;
+  uint32_t PageError = 0;
+
+  EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
+  EraseInitStruct.PageAddress = FLASH_SETTINGS_PAGE_ADDR;
+  EraseInitStruct.NbPages = 1;
+
+  status = HAL_FLASHEx_Erase(&EraseInitStruct, &PageError);
+
+  if (status == HAL_OK)
+  {
+    // Write settings to flash (word by word)
+    uint32_t *data = (uint32_t *)&settings;
+    uint32_t address = FLASH_SETTINGS_PAGE_ADDR;
+    uint32_t words = sizeof(PWM_Settings_t) / 4;
+
+    for (uint32_t i = 0; i < words; i++)
+    {
+      status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, address, data[i]);
+      if (status != HAL_OK)
+      {
+        break;
+      }
+      address += 4;
+    }
+  }
+
+  // Lock flash
+  HAL_FLASH_Lock();
+
+  // Clear dirty flag after successful save
+  if (status == HAL_OK)
+  {
+    settings_dirty = 0;
+    settings_dirty_timestamp = 0;
+  }
+}
+
+/**
+ * @brief Mark settings as dirty (changed by user)
+ */
+void PWM_MarkSettingsDirty(void)
+{
+  if (!settings_dirty)
+  {
+    settings_dirty = 1;
+    settings_dirty_timestamp = HAL_GetTick();
+  }
+  else
+  {
+    // Update timestamp to reset the 10-second timer
+    settings_dirty_timestamp = HAL_GetTick();
+  }
+}
+
+/**
+ * @brief Check if settings are dirty
+ * @return 1 if settings are dirty, 0 otherwise
+ */
+uint8_t PWM_AreSettingsDirty(void)
+{
+  return settings_dirty;
+}
+
+/**
+ * @brief Reset the dirty timer
+ */
+void PWM_ResetDirtyTimer(void)
+{
+  settings_dirty_timestamp = HAL_GetTick();
+}
+
+/**
+ * @brief Get the timestamp when settings became dirty
+ * @return Timestamp in milliseconds
+ */
+uint32_t PWM_GetDirtyTimestamp(void)
+{
+  return settings_dirty_timestamp;
+}
 
 /**
  * @brief Calculate optimal prescaler and period for given frequency
@@ -82,6 +255,9 @@ void PWM_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
 
+  // Try to load saved settings from flash
+  PWM_LoadSettings();
+
   // Enable clocks
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_TIM2_CLK_ENABLE();
@@ -134,6 +310,9 @@ void PWM_SetFrequency(uint32_t frequency)
 
   current_frequency = frequency;
 
+  // Mark settings as dirty for delayed save
+  PWM_MarkSettingsDirty();
+
   // Calculate optimal prescaler and period
   uint32_t prescaler, period;
   PWM_CalculateTimerParams(current_frequency, &prescaler, &period);
@@ -158,6 +337,9 @@ void PWM_SetDutyCycle(uint8_t duty_cycle)
     duty_cycle = 100;
 
   current_duty_cycle = duty_cycle;
+
+  // Mark settings as dirty for delayed save
+  PWM_MarkSettingsDirty();
 
   // Calculate and set pulse width
   uint32_t period = __HAL_TIM_GET_AUTORELOAD(&htim2);
