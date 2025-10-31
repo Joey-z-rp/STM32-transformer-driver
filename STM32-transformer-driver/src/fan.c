@@ -10,6 +10,10 @@ static uint8_t fan_manual_mode = 0;   // Manual mode flag (1 = manual, 0 = auto)
 static uint8_t fan_manual_level = 0;  // Current manual speed level (0 = off, 1-FAN_SPEED_LEVELS = speed levels)
 static uint8_t fan_current_level = 0; // Current speed level (0 = off, 1-FAN_SPEED_LEVELS = speed levels)
 
+// Temperature threshold check variables
+static uint32_t fan_above_threshold_start_time = 0; // Time when temperature first went above threshold
+static uint8_t fan_above_threshold_enabled = 0;     // Flag indicating temp has been above threshold for 5s
+
 // System clock frequency (STM32F103C8 is 72MHz)
 #define SYSTEM_CLOCK 72000000
 
@@ -63,6 +67,10 @@ void Fan_Init(void)
   fan_manual_mode = 0;
   fan_manual_level = 0;
   fan_current_level = 0;
+
+  // Initialize temperature threshold check
+  fan_above_threshold_start_time = 0;
+  fan_above_threshold_enabled = 0;
 }
 
 static void Fan_SetDutyCycle(uint8_t duty_cycle)
@@ -105,20 +113,78 @@ void Fan_Update(float temperature)
 {
   if (fan_manual_mode)
   {
+    // Manual mode: no temperature threshold check needed
+    return;
+  }
+
+  // Temperature threshold check: wait 5 seconds above threshold before enabling fan
+  // This prevents incorrect startup readings from affecting fan control
+  uint32_t current_time = HAL_GetTick();
+
+  // Check if temperature is above threshold
+  if (temperature >= FAN_TEMP_THRESHOLD)
+  {
+    // Temperature is above threshold
+    if (fan_above_threshold_start_time == 0)
+    {
+      // First time above threshold, start timer
+      fan_above_threshold_start_time = current_time;
+      fan_above_threshold_enabled = 0;
+    }
+    else
+    {
+      // Check if we've been above threshold for the required duration
+      uint32_t duration_above_threshold;
+      if (current_time >= fan_above_threshold_start_time)
+      {
+        duration_above_threshold = current_time - fan_above_threshold_start_time;
+      }
+      else
+      {
+        // Handle timer overflow
+        duration_above_threshold = (UINT32_MAX - fan_above_threshold_start_time) + current_time + 1;
+      }
+
+      if (duration_above_threshold >= FAN_TEMP_ABOVE_THRESHOLD_DURATION_MS)
+      {
+        fan_above_threshold_enabled = 1;
+      }
+    }
+  }
+  else
+  {
+    // Temperature dropped below threshold, reset timer
+    fan_above_threshold_start_time = 0;
+    fan_above_threshold_enabled = 0;
+
+    // Turn fan off if temperature is below threshold
+    if (fan_duty_cycle != 0 || fan_current_level != 0)
+    {
+      Fan_SetDutyCycle(0);
+      fan_current_level = 0;
+      fan_active = 0;
+    }
+    return;
+  }
+
+  // Only update fan speed if temperature has been above threshold for 5 seconds
+  if (!fan_above_threshold_enabled)
+  {
+    // Temperature above threshold but not for 5 seconds yet, keep fan off
+    if (fan_duty_cycle != 0 || fan_current_level != 0)
+    {
+      Fan_SetDutyCycle(0);
+      fan_current_level = 0;
+      fan_active = 0;
+    }
     return;
   }
 
   uint8_t target_duty;
   uint8_t target_level;
 
-  if (temperature < FAN_TEMP_THRESHOLD)
-  {
-    // Below threshold: turn fan off
-    target_duty = 0;
-    target_level = 0;
-    fan_active = 0;
-  }
-  else if (temperature >= FAN_TEMP_MAX)
+  // Temperature is above threshold and has been for 5+ seconds
+  if (temperature >= FAN_TEMP_MAX)
   {
     // At or above max temperature: maximum speed (level FAN_SPEED_LEVELS)
     target_duty = FAN_MAX_DUTY;

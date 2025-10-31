@@ -4,11 +4,12 @@
 #include "stm32f1xx_hal.h"
 
 // Fan Configuration
-#define FAN_TEMP_THRESHOLD 40.0f // Temperature threshold in Celsius to start fan
-#define FAN_TEMP_MAX 60.0f       // Temperature for maximum fan speed
-#define FAN_MIN_DUTY 5           // Minimum fan duty cycle when active (%)
-#define FAN_MAX_DUTY 30          // Maximum fan duty cycle (%)
-#define FAN_SPEED_LEVELS 10      // Number of discrete speed levels (e.g., 5 = speeds 1-5)
+#define FAN_TEMP_THRESHOLD 40.0f                  // Temperature threshold in Celsius to start fan
+#define FAN_TEMP_MAX 60.0f                        // Temperature for maximum fan speed
+#define FAN_MIN_DUTY 5                            // Minimum fan duty cycle when active (%)
+#define FAN_MAX_DUTY 30                           // Maximum fan duty cycle (%)
+#define FAN_SPEED_LEVELS 10                       // Number of discrete speed levels (e.g., 5 = speeds 1-5)
+#define FAN_TEMP_ABOVE_THRESHOLD_DURATION_MS 3000 // Duration in milliseconds temp must be above threshold before fan turns on
 
 // Function prototypes
 void Fan_Init(void);
