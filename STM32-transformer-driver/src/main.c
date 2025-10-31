@@ -123,6 +123,9 @@ int main(void)
       // Read temperature from DS18B20
       float temperature = Temperature_Read();
 
+      // Check temperature and enforce thermal cutoff if needed
+      PWM_ThermalCheck(temperature);
+
       // Update fan based on temperature
       Fan_Update(temperature);
 
@@ -158,7 +161,18 @@ int main(void)
 
       // Fan display (show as percentage of operational range)
       uint8_t fan_output = Fan_GetOutputPercent();
-      snprintf(buffer, sizeof(buffer), "F%u%%  ", fan_output);
+      snprintf(buffer, sizeof(buffer), "F%u%% ", fan_output);
+      Screen_Print(buffer);
+
+      // Thermal cutoff indicator
+      if (PWM_IsThermalCutoffActive())
+      {
+        snprintf(buffer, sizeof(buffer), "Overheat");
+      }
+      else
+      {
+        snprintf(buffer, sizeof(buffer), "        ");
+      }
       Screen_Print(buffer);
     }
 

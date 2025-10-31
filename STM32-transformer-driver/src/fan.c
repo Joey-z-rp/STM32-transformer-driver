@@ -69,16 +69,25 @@ void Fan_Init(void)
  *
  * Logic:
  * - Below threshold: Fan off (0%)
- * - At threshold: Fan starts at minimum speed (20%)
- * - Above threshold: Fan speed increases proportionally
- * - At max temp: Fan at 100%
+ * - Between threshold and max: Divided into FAN_SPEED_LEVELS discrete speeds
+ * - At/above max: Maximum speed (FAN_MAX_DUTY)
  * - Gradual ramping for smooth transitions
+ *
+ * Example with FAN_SPEED_LEVELS=5, threshold=40°C, max=60°C, min=20%, max=60%:
+ * - Below 40°C: Off (0%)
+ * - 40-44°C: Speed 1 (20%)
+ * - 44-48°C: Speed 2 (30%)
+ * - 48-52°C: Speed 3 (40%)
+ * - 52-56°C: Speed 4 (50%)
+ * - 56-60°C: Speed 5 (60%)
+ * - 60°C+: Speed 5 (60%)
  */
 void Fan_Update(float temperature)
 {
   uint32_t current_time = HAL_GetTick();
 
-  // Calculate target duty cycle based on temperature
+  // Automatic temperature-based control
+  // Calculate target duty cycle based on temperature with discrete levels
   if (temperature < FAN_TEMP_THRESHOLD)
   {
     // Below threshold: turn fan off
@@ -87,25 +96,31 @@ void Fan_Update(float temperature)
   }
   else if (temperature >= FAN_TEMP_MAX)
   {
-    // At or above max temperature: full speed
+    // At or above max temperature: maximum speed
     fan_target_duty = FAN_MAX_DUTY;
     fan_active = 1;
   }
   else
   {
-    // Between threshold and max: calculate proportional speed
-    // Linear interpolation from FAN_MIN_DUTY to FAN_MAX_DUTY
+    // Between threshold and max: use configurable discrete speed levels
+    // Calculate which speed level based on temperature
     float temp_range = FAN_TEMP_MAX - FAN_TEMP_THRESHOLD;
     float temp_above_threshold = temperature - FAN_TEMP_THRESHOLD;
-    float duty_range = FAN_MAX_DUTY - FAN_MIN_DUTY;
+    float temp_step = temp_range / (float)FAN_SPEED_LEVELS;
 
-    fan_target_duty = FAN_MIN_DUTY + (uint8_t)((temp_above_threshold / temp_range) * duty_range);
+    // Determine speed level (0 to FAN_SPEED_LEVELS-1)
+    uint8_t speed_level = (uint8_t)(temp_above_threshold / temp_step);
 
     // Clamp to valid range
-    if (fan_target_duty > FAN_MAX_DUTY)
-      fan_target_duty = FAN_MAX_DUTY;
-    if (fan_target_duty < FAN_MIN_DUTY)
-      fan_target_duty = FAN_MIN_DUTY;
+    if (speed_level >= FAN_SPEED_LEVELS)
+    {
+      speed_level = FAN_SPEED_LEVELS - 1;
+    }
+
+    // Calculate duty cycle for this speed level
+    // Linearly distribute duty cycles from FAN_MIN_DUTY to FAN_MAX_DUTY
+    uint8_t duty_range = FAN_MAX_DUTY - FAN_MIN_DUTY;
+    fan_target_duty = FAN_MIN_DUTY + (duty_range * speed_level) / (FAN_SPEED_LEVELS - 1);
 
     fan_active = 1;
   }

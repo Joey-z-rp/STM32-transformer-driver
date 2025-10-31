@@ -7,6 +7,15 @@ TIM_HandleTypeDef htim2;
 static uint32_t current_frequency = 10000; // Default: 10 kHz
 static uint8_t current_duty_cycle = 0;     // Default: 0%
 
+// Thermal cutoff state
+static uint8_t thermal_cutoff_active = 0; // Flag indicating if thermal cutoff is active
+static uint8_t saved_duty_cycle = 0;      // Duty cycle to restore after thermal event
+static uint8_t high_temp_count = 0;       // Counter for consecutive high temperature readings
+static uint8_t low_temp_count = 0;        // Counter for consecutive low temperature readings
+
+// Thermal cutoff configuration
+#define THERMAL_CONSECUTIVE_READINGS 5 // Number of consecutive readings required
+
 // System clock frequency (STM32F103C8 default is 72MHz)
 #define SYSTEM_CLOCK 72000000
 
@@ -411,4 +420,96 @@ void PWM_DecreaseDutyCycle(void)
   {
     PWM_SetDutyCycle((uint8_t)new_duty);
   }
+}
+
+/**
+ * @brief Check temperature and enforce thermal cutoff if needed
+ * @param temperature Current temperature in Celsius
+ *
+ * This function implements thermal protection with hysteresis and consecutive reading requirements:
+ * - If temperature >= 80°C for 5 consecutive readings: Cut off PWM output (set duty cycle to 0)
+ * - If temperature <= 75°C for 5 consecutive readings: Restore PWM output to previous duty cycle
+ *
+ * The consecutive reading requirement prevents false triggers from sensor noise or brief spikes.
+ * The hysteresis prevents rapid on/off cycling when temperature hovers around threshold.
+ */
+void PWM_ThermalCheck(float temperature)
+{
+  // Check for valid temperature reading (DS18B20 returns -1000.0f on error)
+  if (temperature < -999.0f)
+  {
+    return; // Invalid reading, don't take action
+  }
+
+  if (!thermal_cutoff_active)
+  {
+    // Normal operation - check if we need to activate thermal cutoff
+    if (temperature >= PWM_THERMAL_CUTOFF_TEMP)
+    {
+      // Increment high temperature counter
+      high_temp_count++;
+      low_temp_count = 0; // Reset low temperature counter
+
+      // Check if we have enough consecutive high readings
+      if (high_temp_count >= THERMAL_CONSECUTIVE_READINGS)
+      {
+        // Save current duty cycle before cutting off
+        saved_duty_cycle = current_duty_cycle;
+
+        // Activate thermal cutoff
+        thermal_cutoff_active = 1;
+
+        // Force duty cycle to 0 (cut off PWM output)
+        // Use the low-level HAL function to avoid marking settings as dirty
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+
+        // Reset counter after activation
+        high_temp_count = 0;
+      }
+    }
+    else
+    {
+      // Temperature below cutoff threshold - reset counter
+      high_temp_count = 0;
+    }
+  }
+  else
+  {
+    // Thermal cutoff is active - check if we can restore operation
+    if (temperature <= PWM_THERMAL_RESTORE_TEMP)
+    {
+      // Increment low temperature counter
+      low_temp_count++;
+      high_temp_count = 0; // Reset high temperature counter
+
+      // Check if we have enough consecutive low readings
+      if (low_temp_count >= THERMAL_CONSECUTIVE_READINGS)
+      {
+        // Deactivate thermal cutoff
+        thermal_cutoff_active = 0;
+
+        // Restore previous duty cycle
+        uint32_t period = __HAL_TIM_GET_AUTORELOAD(&htim2);
+        uint32_t pulse = (period + 1) * saved_duty_cycle / 100;
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pulse);
+
+        // Reset counter after restoration
+        low_temp_count = 0;
+      }
+    }
+    else
+    {
+      // Temperature above restore threshold - reset counter
+      low_temp_count = 0;
+    }
+  }
+}
+
+/**
+ * @brief Check if thermal cutoff is currently active
+ * @return 1 if thermal cutoff is active, 0 otherwise
+ */
+uint8_t PWM_IsThermalCutoffActive(void)
+{
+  return thermal_cutoff_active;
 }
