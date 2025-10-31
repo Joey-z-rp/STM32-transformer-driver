@@ -1,5 +1,6 @@
 #include "button.h"
 #include "pwm.h"
+#include "fan.h"
 
 // Button state tracking structure
 typedef struct
@@ -16,6 +17,7 @@ static ButtonContext_t btn_freq_up = {0};
 static ButtonContext_t btn_freq_down = {0};
 static ButtonContext_t btn_duty_up = {0};
 static ButtonContext_t btn_duty_down = {0};
+static ButtonContext_t btn_fan_manual = {0};
 
 /**
  * @brief Initialize buttons as inputs with pull-up resistors
@@ -30,7 +32,8 @@ void Button_Init(void)
   // Configure button pins as inputs with pull-up resistors
   // Buttons are active LOW (pressed = LOW, released = HIGH)
   GPIO_InitStruct.Pin = BTN_FREQ_UP_PIN | BTN_FREQ_DOWN_PIN |
-                        BTN_DUTY_UP_PIN | BTN_DUTY_DOWN_PIN;
+                        BTN_DUTY_UP_PIN | BTN_DUTY_DOWN_PIN |
+                        BTN_FAN_MANUAL_PIN;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -161,4 +164,6 @@ void Button_Process(void)
   Button_ProcessSingle(BTN_FREQ_DOWN_PIN, &btn_freq_down, PWM_DecreaseFrequency);
   Button_ProcessSingle(BTN_DUTY_UP_PIN, &btn_duty_up, PWM_IncreaseDutyCycle);
   Button_ProcessSingle(BTN_DUTY_DOWN_PIN, &btn_duty_down, PWM_DecreaseDutyCycle);
+  // Process fan manual control button (single press only, no auto-repeat)
+  Button_ProcessSingle(BTN_FAN_MANUAL_PIN, &btn_fan_manual, Fan_CycleSpeedLevel);
 }

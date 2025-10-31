@@ -5,9 +5,10 @@ TIM_HandleTypeDef htim3_fan;
 
 // Fan state variables
 static uint8_t fan_duty_cycle = 0;    // Current fan duty cycle (0-100%)
-static uint8_t fan_target_duty = 0;   // Target duty cycle for gradual ramping
 static uint8_t fan_active = 0;        // Fan active flag
-static uint32_t last_update_time = 0; // Last update timestamp
+static uint8_t fan_manual_mode = 0;   // Manual mode flag (1 = manual, 0 = auto)
+static uint8_t fan_manual_level = 0;  // Current manual speed level (0 = off, 1-FAN_SPEED_LEVELS = speed levels)
+static uint8_t fan_current_level = 0; // Current speed level (0 = off, 1-FAN_SPEED_LEVELS = speed levels)
 
 // System clock frequency (STM32F103C8 is 72MHz)
 #define SYSTEM_CLOCK 72000000
@@ -58,46 +59,70 @@ void Fan_Init(void)
 
   // Initialize state
   fan_duty_cycle = 0;
-  fan_target_duty = 0;
   fan_active = 0;
-  last_update_time = HAL_GetTick();
+  fan_manual_mode = 0;
+  fan_manual_level = 0;
+  fan_current_level = 0;
 }
 
-/**
- * @brief Update fan speed based on temperature
- * @param temperature Current temperature in Celsius
- *
- * Logic:
- * - Below threshold: Fan off (0%)
- * - Between threshold and max: Divided into FAN_SPEED_LEVELS discrete speeds
- * - At/above max: Maximum speed (FAN_MAX_DUTY)
- * - Gradual ramping for smooth transitions
- *
- * Example with FAN_SPEED_LEVELS=5, threshold=40°C, max=60°C, min=20%, max=60%:
- * - Below 40°C: Off (0%)
- * - 40-44°C: Speed 1 (20%)
- * - 44-48°C: Speed 2 (30%)
- * - 48-52°C: Speed 3 (40%)
- * - 52-56°C: Speed 4 (50%)
- * - 56-60°C: Speed 5 (60%)
- * - 60°C+: Speed 5 (60%)
- */
+static void Fan_SetDutyCycle(uint8_t duty_cycle)
+{
+  fan_duty_cycle = duty_cycle;
+
+  // Update PWM duty cycle immediately
+  uint32_t period = __HAL_TIM_GET_AUTORELOAD(&htim3_fan);
+  uint32_t pulse = (period + 1) * fan_duty_cycle / 100;
+  __HAL_TIM_SET_COMPARE(&htim3_fan, TIM_CHANNEL_2, pulse);
+}
+
+void Fan_CycleSpeedLevel(void)
+{
+  fan_manual_mode = 1;
+
+  fan_manual_level++;
+  if (fan_manual_level > FAN_SPEED_LEVELS)
+  {
+    fan_manual_level = 0;
+  }
+
+  if (fan_manual_level == 0)
+  {
+    Fan_SetDutyCycle(0);
+    fan_active = 0;
+    fan_current_level = 0;
+  }
+  else
+  {
+    uint8_t duty_range = FAN_MAX_DUTY - FAN_MIN_DUTY;
+    uint8_t duty_cycle = FAN_MIN_DUTY + (duty_range * (fan_manual_level - 1)) / (FAN_SPEED_LEVELS - 1);
+    Fan_SetDutyCycle(duty_cycle);
+    fan_active = 1;
+    fan_current_level = fan_manual_level;
+  }
+}
+
 void Fan_Update(float temperature)
 {
-  uint32_t current_time = HAL_GetTick();
+  if (fan_manual_mode)
+  {
+    return;
+  }
 
-  // Automatic temperature-based control
-  // Calculate target duty cycle based on temperature with discrete levels
+  uint8_t target_duty;
+  uint8_t target_level;
+
   if (temperature < FAN_TEMP_THRESHOLD)
   {
     // Below threshold: turn fan off
-    fan_target_duty = 0;
+    target_duty = 0;
+    target_level = 0;
     fan_active = 0;
   }
   else if (temperature >= FAN_TEMP_MAX)
   {
-    // At or above max temperature: maximum speed
-    fan_target_duty = FAN_MAX_DUTY;
+    // At or above max temperature: maximum speed (level FAN_SPEED_LEVELS)
+    target_duty = FAN_MAX_DUTY;
+    target_level = FAN_SPEED_LEVELS;
     fan_active = 1;
   }
   else
@@ -117,43 +142,21 @@ void Fan_Update(float temperature)
       speed_level = FAN_SPEED_LEVELS - 1;
     }
 
+    // Convert 0-indexed level to 1-indexed (0 = off, 1-FAN_SPEED_LEVELS = speed levels)
+    target_level = speed_level + 1;
+
     // Calculate duty cycle for this speed level
     // Linearly distribute duty cycles from FAN_MIN_DUTY to FAN_MAX_DUTY
     uint8_t duty_range = FAN_MAX_DUTY - FAN_MIN_DUTY;
-    fan_target_duty = FAN_MIN_DUTY + (duty_range * speed_level) / (FAN_SPEED_LEVELS - 1);
+    target_duty = FAN_MIN_DUTY + (duty_range * speed_level) / (FAN_SPEED_LEVELS - 1);
 
     fan_active = 1;
   }
 
-  // Gradual ramping: update duty cycle towards target
-  // Only update at specified interval for smooth ramping
-  if ((current_time - last_update_time) >= FAN_UPDATE_INTERVAL)
+  if (fan_duty_cycle != target_duty || fan_current_level != target_level)
   {
-    last_update_time = current_time;
-
-    if (fan_duty_cycle < fan_target_duty)
-    {
-      // Ramp up
-      fan_duty_cycle += FAN_RAMP_STEP;
-      if (fan_duty_cycle > fan_target_duty)
-        fan_duty_cycle = fan_target_duty;
-    }
-    else if (fan_duty_cycle > fan_target_duty)
-    {
-      // Ramp down
-      if (fan_duty_cycle >= FAN_RAMP_STEP)
-        fan_duty_cycle -= FAN_RAMP_STEP;
-      else
-        fan_duty_cycle = 0;
-
-      if (fan_duty_cycle < fan_target_duty)
-        fan_duty_cycle = fan_target_duty;
-    }
-
-    // Update PWM duty cycle
-    uint32_t period = __HAL_TIM_GET_AUTORELOAD(&htim3_fan);
-    uint32_t pulse = (period + 1) * fan_duty_cycle / 100;
-    __HAL_TIM_SET_COMPARE(&htim3_fan, TIM_CHANNEL_2, pulse);
+    Fan_SetDutyCycle(target_duty);
+    fan_current_level = target_level;
   }
 }
 
@@ -166,34 +169,15 @@ uint8_t Fan_GetDutyCycle(void)
   return fan_duty_cycle;
 }
 
-/**
- * @brief Get fan output as percentage of operational range
- * @return Fan output percentage (0-100%)
- *
- * Returns fan speed as a percentage of its operational range:
- * - 0% = Fan off
- * - 100% = Fan at maximum configured speed (FAN_MAX_DUTY)
- * This provides accurate display regardless of FAN_MAX_DUTY setting
- */
 uint8_t Fan_GetOutputPercent(void)
 {
-  if (fan_duty_cycle == 0)
+  if (fan_current_level == 0)
   {
     return 0;
   }
 
-  // Calculate percentage based on operational range (MIN to MAX duty)
-  if (fan_duty_cycle < FAN_MIN_DUTY)
-  {
-    return 0;
-  }
+  uint8_t output_percent = (fan_current_level * 100) / FAN_SPEED_LEVELS;
 
-  // Map duty cycle from [FAN_MIN_DUTY, FAN_MAX_DUTY] to [0, 100]
-  uint8_t duty_range = FAN_MAX_DUTY - FAN_MIN_DUTY;
-  uint8_t duty_above_min = fan_duty_cycle - FAN_MIN_DUTY;
-  uint8_t output_percent = (duty_above_min * 100) / duty_range;
-
-  // Clamp to 100%
   if (output_percent > 100)
     output_percent = 100;
 

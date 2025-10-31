@@ -8,6 +8,7 @@
 #define BTN_FREQ_DOWN_PIN GPIO_PIN_2
 #define BTN_DUTY_UP_PIN GPIO_PIN_3
 #define BTN_DUTY_DOWN_PIN GPIO_PIN_4
+#define BTN_FAN_MANUAL_PIN GPIO_PIN_8
 #define BTN_GPIO_PORT GPIOA
 
 // Debounce time in milliseconds
